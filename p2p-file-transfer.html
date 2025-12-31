@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P File Transfer - 点对点文件传输</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- PeerJS -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
+    <!-- QRCode.js -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #e2e8f0;
+        }
+        
+        /* 玻璃拟态效果 */
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        
+        /* 拖拽区域 */
+        .drop-zone {
+            border: 2px dashed #475569;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .drop-zone:hover {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.05);
+        }
+        
+        .drop-zone.drag-over {
+            border-color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+            transform: scale(1.02);
+        }
+        
+        /* 按钮样式 */
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(16, 185, 129, 0.3);
+        }
+        
+        /* 输入框 */
+        input {
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            color: #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* 进度条 */
+        .progress-bar {
+            height: 8px;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #10b981 100%);
+            transition: width 0.3s ease;
+            border-radius: 9999px;
+        }
+        
+        /* 日志窗口 */
+        .log-window {
+            background: rgba(15, 23, 42, 0.8);
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-window::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .log-window::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+        }
+        
+        .log-window::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        
+        .log-entry {
+            padding: 4px 8px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.05);
+        }
+        
+        .log-info { color: #60a5fa; }
+        .log-success { color: #34d399; }
+        .log-error { color: #f87171; }
+        .log-warning { color: #fbbf24; }
+        
+        /* QR Code 容器 */
+        #qrcode {
+            display: inline-block;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+        }
+        
+        /* 状态指示器 */
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .status-offline { background: #64748b; }
+        .status-online { 
+            background: #10b981;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            h1 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-2">
+                <i class="fas fa-exchange-alt text-blue-500"></i>
+                P2P File Transfer
+            </h1>
+            <p class="text-slate-400">点对点文件传输 · 无需服务器 · 直连加密</p>
+        </header>
+        
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Sender Section -->
+            <div class="glass rounded-xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-semibold">
+                        <i class="fas fa-paper-plane text-blue-400"></i>
+                        发送文件
+                    </h2>
+                    <div class="flex items-center">
+                        <span class="status-indicator" id="senderStatus"></span>
+                        <span class="text-sm text-slate-400" id="senderStatusText">离线</span>
+                    </div>
+                </div>
+                
+                <!-- Connection ID -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                        您的连接 ID
+                    </label>
+                    <div class="flex gap-2">
+                        <input 
+                            type="text" 
+                            id="myId" 
+                            class="flex-1 px-4 py-2 rounded-lg"
+                            placeholder="cool-tiger-88"
+                            readonly
+                        >
+                        <button 
+                            onclick="generateNewId()" 
+                            class="btn-primary px-4 py-2 rounded-lg font-medium"
+                            title="生成新 ID"
+                        >
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <button 
+                            onclick="copyId()" 
+                            class="btn-primary px-4 py-2 rounded-lg font-medium"
+                            title="复制 ID"
+                        >
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- QR Code -->
+                <div class="text-center mb-4">
+                    <div id="qrcode" class="inline-block"></div>
+                    <p class="text-xs text-slate-400 mt-2">扫描二维码获取连接 ID</p>
+                </div>
+                
+                <!-- File Drop Zone -->
+                <div 
+                    id="dropZone" 
+                    class="drop-zone rounded-xl p-8 text-center mb-4"
+                    ondrop="handleDrop(event)"
+                    ondragover="handleDragOver(event)"
+                    ondragleave="handleDragLeave(event)"
+                    onclick="document.getElementById('fileInput').click()"
+                >
+                    <i class="fas fa-cloud-upload-alt text-6xl text-slate-500 mb-4"></i>
+                    <p class="text-lg font-medium mb-2">拖拽文件到这里</p>
+                    <p class="text-sm text-slate-400">或点击选择文件</p>
+                    <input 
+                        type="file" 
+                        id="fileInput" 
+                        class="hidden" 
+                        onchange="handleFileSelect(event)"
+                    >
+                </div>
+                
+                <!-- Selected File Info -->
+                <div id="fileInfo" class="hidden glass rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-file text-3xl text-blue-400"></i>
+                            <div>
+                                <p class="font-medium" id="fileName"></p>
+                                <p class="text-sm text-slate-400" id="fileSize"></p>
+                            </div>
+                        </div>
+                        <button 
+                            onclick="clearFile()" 
+                            class="text-red-400 hover:text-red-300"
+                        >
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div id="sendProgress" class="hidden">
+                        <div class="progress-bar mb-2">
+                            <div class="progress-fill" id="sendProgressFill" style="width: 0%"></div>
+                        </div>
+                        <p class="text-sm text-slate-400 text-center" id="sendProgressText">0%</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Receiver Section -->
+            <div class="glass rounded-xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-semibold">
+                        <i class="fas fa-download text-green-400"></i>
+                        接收文件
+                    </h2>
+                    <div class="flex items-center">
+                        <span class="status-indicator" id="receiverStatus"></span>
+                        <span class="text-sm text-slate-400" id="receiverStatusText">离线</span>
+                    </div>
+                </div>
+                
+                <!-- Connect to Peer -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                        输入发送方的连接 ID
+                    </label>
+                    <div class="flex gap-2">
+                        <input 
+                            type="text" 
+                            id="peerId" 
+                            class="flex-1 px-4 py-2 rounded-lg"
+                            placeholder="例如: cool-tiger-88"
+                        >
+                        <button 
+                            onclick="connectToPeer()" 
+                            class="btn-success px-6 py-2 rounded-lg font-medium"
+                            id="connectBtn"
+                        >
+                            <i class="fas fa-link"></i> 连接
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Connection Status -->
+                <div id="connectionStatus" class="glass rounded-lg p-4 mb-4 hidden">
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-check-circle text-green-400 text-2xl"></i>
+                        <div>
+                            <p class="font-medium">已连接</p>
+                            <p class="text-sm text-slate-400">等待接收文件...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Receive Progress -->
+                <div id="receiveProgress" class="hidden">
+                    <div class="glass rounded-lg p-4 mb-4">
+                        <div class="flex items-center gap-3 mb-3">
+                            <i class="fas fa-file-download text-3xl text-green-400"></i>
+                            <div class="flex-1">
+                                <p class="font-medium" id="receiveFileName"></p>
+                                <p class="text-sm text-slate-400" id="receiveFileSize"></p>
+                            </div>
+                        </div>
+                        <div class="progress-bar mb-2">
+                            <div class="progress-fill" id="receiveProgressFill" style="width: 0%"></div>
+                        </div>
+                        <p class="text-sm text-slate-400 text-center" id="receiveProgressText">0%</p>
+                    </div>
+                </div>
+                
+                <!-- Download Button -->
+                <div id="downloadSection" class="hidden">
+                    <button 
+                        onclick="downloadFile()" 
+                        class="w-full btn-success py-3 rounded-lg font-medium text-lg"
+                    >
+                        <i class="fas fa-download"></i> 下载文件
+                    </button>
+                </div>
+                
+                <!-- Placeholder -->
+                <div id="receiverPlaceholder" class="text-center py-12">
+                    <i class="fas fa-satellite-dish text-6xl text-slate-600 mb-4"></i>
+                    <p class="text-slate-400">输入 ID 并连接以接收文件</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Log Console -->
+        <div class="glass rounded-xl p-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold">
+                    <i class="fas fa-terminal text-slate-400"></i>
+                    日志控制台
+                </h3>
+                <button 
+                    onclick="clearLogs()" 
+                    class="text-sm text-slate-400 hover:text-slate-300"
+                >
+                    <i class="fas fa-trash"></i> 清空
+                </button>
+            </div>
+            <div class="log-window rounded-lg p-2" id="logWindow"></div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="text-center mt-8 text-slate-500 text-sm">
+            <p>
+                <i class="fas fa-shield-alt"></i>
+                所有文件直接在设备间传输，完全加密，无服务器存储
+            </p>
+        </footer>
+    </div>
+    
+    <script>
+        // 全局变量
+        let peer = null;
+        let connection = null;
+        let selectedFile = null;
+        let receivedChunks = [];
+        let receivedMetadata = null;
+        let receivedBlob = null;
+        
+        const CHUNK_SIZE = 16 * 1024; // 16KB chunks
+        
+        // 生成随机 ID
+        function generateRandomId() {
+            const adjectives = ['cool', 'fast', 'bright', 'swift', 'smart', 'brave', 'calm', 'wild'];
+            const animals = ['tiger', 'eagle', 'wolf', 'lion', 'bear', 'hawk', 'fox', 'panda'];
+            const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+            const animal = animals[Math.floor(Math.random() * animals.length)];
+            const num = Math.floor(Math.random() * 100);
+            return `${adj}-${animal}-${num}`;
+        }
+        
+        // 初始化
+        function init() {
+            try {
+                // 检查必要的库是否加载
+                if (typeof Peer === 'undefined') {
+                    log('PeerJS 库加载失败，请检查网络连接', 'error');
+                    return;
+                }
+                
+                const myId = generateRandomId();
+                document.getElementById('myId').value = myId;
+                
+                // 延迟生成二维码，确保DOM完全准备好
+                setTimeout(() => {
+                    generateQRCode(myId);
+                }, 100);
+                
+                initializePeer(myId);
+                log('系统初始化完成', 'info');
+            } catch (err) {
+                log(`初始化失败: ${err.message}`, 'error');
+            }
+        }
+        
+        // 生成新 ID
+        function generateNewId() {
+            if (peer) {
+                peer.destroy();
+            }
+            init();
+            log('生成新的连接 ID', 'info');
+        }
+        
+        // 复制 ID
+        async function copyId() {
+            const idInput = document.getElementById('myId');
+            const id = idInput.value;
+            
+            try {
+                // 优先使用现代 Clipboard API
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(id);
+                    log('ID 已复制到剪贴板', 'success');
+                } else {
+                    // 降级方案：使用传统方法
+                    idInput.select();
+                    idInput.setSelectionRange(0, 99999); // 移动端兼容
+                    document.execCommand('copy');
+                    log('ID 已复制到剪贴板', 'success');
+                }
+            } catch (err) {
+                log('复制失败，请手动复制', 'error');
+                // 选中文本让用户手动复制
+                idInput.select();
+            }
+        }
+        
+        // 生成二维码
+        function generateQRCode(id) {
+            const qrContainer = document.getElementById('qrcode');
+            qrContainer.innerHTML = '';
+            
+            try {
+                // 确保 QRCode 库已加载
+                if (typeof QRCode === 'undefined') {
+                    log('二维码库加载失败，请刷新页面', 'error');
+                    qrContainer.innerHTML = '<p class="text-red-400 p-4">二维码加载失败</p>';
+                    return;
+                }
+                
+                new QRCode(qrContainer, {
+                    text: id,
+                    width: 150,
+                    height: 150,
+                    colorDark: '#1e293b',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            } catch (err) {
+                log(`二维码生成失败: ${err.message}`, 'error');
+                qrContainer.innerHTML = `<p class="text-yellow-400 p-4 text-sm">ID: ${id}<br>手动输入此ID</p>`;
+            }
+        }
+        
+        // 初始化 PeerJS
+        function initializePeer(id) {
+            try {
+                peer = new Peer(id, {
+                    debug: 2, // 开启调试模式
+                    config: {
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:global.stun.twilio.com:3478' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' }
+                        ]
+                    }
+                });
+                
+                peer.on('open', (id) => {
+                    log(`已连接到信令服务器，ID: ${id}`, 'success');
+                    updateStatus('sender', true);
+                });
+                
+                peer.on('connection', (conn) => {
+                    log('接收到连接请求', 'info');
+                    connection = conn;
+                    setupConnection(conn);
+                });
+                
+                peer.on('error', (err) => {
+                    log(`错误: ${err.type} - ${err.message}`, 'error');
+                    
+                    if (err.type === 'unavailable-id') {
+                        log('ID 已被占用，正在生成新 ID...', 'warning');
+                        setTimeout(generateNewId, 1000);
+                    } else if (err.type === 'peer-unavailable') {
+                        log('对方不在线或 ID 不存在', 'error');
+                    } else if (err.type === 'network') {
+                        log('网络错误，请检查网络连接', 'error');
+                    } else if (err.type === 'server-error') {
+                        log('服务器错误，请稍后重试', 'error');
+                    }
+                });
+                
+                peer.on('disconnected', () => {
+                    log('与信令服务器断开连接', 'warning');
+                    updateStatus('sender', false);
+                    
+                    // 尝试重连
+                    setTimeout(() => {
+                        if (peer && !peer.destroyed) {
+                            log('尝试重新连接...', 'info');
+                            peer.reconnect();
+                        }
+                    }, 3000);
+                });
+                
+                peer.on('close', () => {
+                    log('连接已关闭', 'warning');
+                    updateStatus('sender', false);
+                });
+                
+            } catch (err) {
+                log(`PeerJS 初始化失败: ${err.message}`, 'error');
+            }
+        }
+        
+        // 设置连接
+        function setupConnection(conn) {
+            conn.on('open', () => {
+                log('P2P 连接已建立', 'success');
+                
+                // 如果有选中的文件，自动发送
+                if (selectedFile) {
+                    sendFile(conn);
+                }
+            });
+            
+            conn.on('data', (data) => {
+                handleReceivedData(data);
+            });
+            
+            conn.on('close', () => {
+                log('连接已关闭', 'info');
+                connection = null;
+            });
+            
+            conn.on('error', (err) => {
+                log(`连接错误: ${err}`, 'error');
+            });
+        }
+        
+        // 连接到对方
+        function connectToPeer() {
+            const peerId = document.getElementById('peerId').value.trim();
+            
+            if (!peerId) {
+                log('请输入对方的连接 ID', 'warning');
+                return;
+            }
+            
+            if (!peer) {
+                log('正在初始化连接...', 'info');
+                setTimeout(() => connectToPeer(), 500);
+                return;
+            }
+            
+            if (!peer.open) {
+                log('未连接到信令服务器，请稍候...', 'warning');
+                return;
+            }
+            
+            if (peerId === peer.id) {
+                log('不能连接到自己！', 'error');
+                return;
+            }
+            
+            log(`正在连接到 ${peerId}...`, 'info');
+            
+            try {
+                connection = peer.connect(peerId, {
+                    reliable: true,
+                    serialization: 'json'
+                });
+                
+                setupReceiverConnection(connection);
+            } catch (err) {
+                log(`连接失败: ${err.message}`, 'error');
+            }
+        }
+        
+        // 设置接收方连接
+        function setupReceiverConnection(conn) {
+            conn.on('open', () => {
+                log('已连接到发送方', 'success');
+                updateStatus('receiver', true);
+                document.getElementById('connectionStatus').classList.remove('hidden');
+                document.getElementById('receiverPlaceholder').classList.add('hidden');
+            });
+            
+            conn.on('data', (data) => {
+                handleReceivedData(data);
+            });
+            
+            conn.on('close', () => {
+                log('连接已断开', 'info');
+                updateStatus('receiver', false);
+                document.getElementById('connectionStatus').classList.add('hidden');
+            });
+            
+            conn.on('error', (err) => {
+                log(`连接错误: ${err}`, 'error');
+                updateStatus('receiver', false);
+            });
+        }
+        
+        // 文件选择
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                setSelectedFile(file);
+            }
+        }
+        
+        // 拖拽处理
+        function handleDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            
+            const dropZone = document.getElementById('dropZone');
+            dropZone.classList.remove('drag-over');
+            
+            const file = event.dataTransfer.files[0];
+            if (file) {
+                setSelectedFile(file);
+            }
+        }
+        
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            document.getElementById('dropZone').classList.add('drag-over');
+        }
+        
+        function handleDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            document.getElementById('dropZone').classList.remove('drag-over');
+        }
+        
+        // 设置选中的文件
+        function setSelectedFile(file) {
+            selectedFile = file;
+            
+            document.getElementById('dropZone').classList.add('hidden');
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+            
+            log(`已选择文件: ${file.name} (${formatFileSize(file.size)})`, 'info');
+            
+            // 如果已经有连接，立即发送
+            if (connection && connection.open) {
+                sendFile(connection);
+            }
+        }
+        
+        // 清除文件
+        function clearFile() {
+            selectedFile = null;
+            document.getElementById('dropZone').classList.remove('hidden');
+            document.getElementById('fileInfo').classList.add('hidden');
+            document.getElementById('sendProgress').classList.add('hidden');
+            document.getElementById('fileInput').value = '';
+            log('已清除选中的文件', 'info');
+        }
+        
+        // 发送文件
+        async function sendFile(conn) {
+            if (!selectedFile || !conn.open) {
+                return;
+            }
+            
+            log(`开始发送文件: ${selectedFile.name}`, 'info');
+            document.getElementById('sendProgress').classList.remove('hidden');
+            
+            // 发送元数据
+            const metadata = {
+                type: 'metadata',
+                name: selectedFile.name,
+                size: selectedFile.size,
+                fileType: selectedFile.type
+            };
+            
+            conn.send(metadata);
+            log('已发送文件元数据', 'info');
+            
+            // 分块发送文件
+            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+            let offset = 0;
+            let chunkIndex = 0;
+            
+            const sendNextChunk = () => {
+                const chunk = selectedFile.slice(offset, offset + CHUNK_SIZE);
+                const reader = new FileReader();
+                
+                reader.onload = (e) => {
+                    conn.send({
+                        type: 'chunk',
+                        data: e.target.result,
+                        index: chunkIndex,
+                        total: totalChunks
+                    });
+                    
+                    chunkIndex++;
+                    offset += CHUNK_SIZE;
+                    
+                    const progress = Math.min(100, Math.round((offset / selectedFile.size) * 100));
+                    updateSendProgress(progress);
+                    
+                    if (offset < selectedFile.size) {
+                        setTimeout(sendNextChunk, 10); // 小延迟避免阻塞
+                    } else {
+                        conn.send({ type: 'complete' });
+                        log('文件发送完成', 'success');
+                        updateSendProgress(100);
+                    }
+                };
+                
+                reader.readAsArrayBuffer(chunk);
+            };
+            
+            sendNextChunk();
+        }
+        
+        // 处理接收到的数据
+        function handleReceivedData(data) {
+            if (data.type === 'metadata') {
+                // 接收元数据
+                receivedMetadata = data;
+                receivedChunks = [];
+                
+                log(`开始接收文件: ${data.name} (${formatFileSize(data.size)})`, 'info');
+                
+                document.getElementById('receiveProgress').classList.remove('hidden');
+                document.getElementById('receiveFileName').textContent = data.name;
+                document.getElementById('receiveFileSize').textContent = formatFileSize(data.size);
+                
+            } else if (data.type === 'chunk') {
+                // 接收文件块
+                receivedChunks.push(data.data);
+                
+                const progress = Math.round((data.index / data.total) * 100);
+                updateReceiveProgress(progress);
+                
+            } else if (data.type === 'complete') {
+                // 接收完成
+                log('文件接收完成', 'success');
+                assembleFile();
+            }
+        }
+        
+        // 组装文件
+        function assembleFile() {
+            if (!receivedMetadata || receivedChunks.length === 0) {
+                return;
+            }
+            
+            receivedBlob = new Blob(receivedChunks, { type: receivedMetadata.fileType });
+            
+            log('文件组装完成，准备下载', 'success');
+            
+            document.getElementById('receiveProgress').classList.add('hidden');
+            document.getElementById('downloadSection').classList.remove('hidden');
+            
+            // 自动下载
+            setTimeout(downloadFile, 500);
+        }
+        
+        // 下载文件
+        function downloadFile() {
+            if (!receivedBlob || !receivedMetadata) {
+                return;
+            }
+            
+            const url = URL.createObjectURL(receivedBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = receivedMetadata.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            log(`文件已下载: ${receivedMetadata.name}`, 'success');
+        }
+        
+        // 更新发送进度
+        function updateSendProgress(percent) {
+            document.getElementById('sendProgressFill').style.width = percent + '%';
+            document.getElementById('sendProgressText').textContent = percent + '%';
+        }
+        
+        // 更新接收进度
+        function updateReceiveProgress(percent) {
+            document.getElementById('receiveProgressFill').style.width = percent + '%';
+            document.getElementById('receiveProgressText').textContent = percent + '%';
+        }
+        
+        // 更新状态
+        function updateStatus(type, online) {
+            const statusElement = document.getElementById(type + 'Status');
+            const statusTextElement = document.getElementById(type + 'StatusText');
+            
+            if (online) {
+                statusElement.className = 'status-indicator status-online';
+                statusTextElement.textContent = '在线';
+            } else {
+                statusElement.className = 'status-indicator status-offline';
+                statusTextElement.textContent = '离线';
+            }
+        }
+        
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+        
+        // 日志系统
+        function log(message, type = 'info') {
+            const logWindow = document.getElementById('logWindow');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            logWindow.appendChild(entry);
+            logWindow.scrollTop = logWindow.scrollHeight;
+        }
+        
+        function clearLogs() {
+            document.getElementById('logWindow').innerHTML = '';
+            log('日志已清空', 'info');
+        }
+        
+        // 页面加载时初始化
+        window.addEventListener('load', () => {
+            // 等待所有资源加载完成
+            setTimeout(init, 200);
+        });
+        
+        // 防止在库加载前就调用
+        if (document.readyState === 'complete') {
+            setTimeout(init, 200);
+        }
+    </script>
+</body>
+</html>
